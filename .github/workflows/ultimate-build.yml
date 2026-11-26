@@ -659,9 +659,8 @@ jobs:
             echo "::error::No GLSL files remain for packaging."
             exit 1
           fi
-          # The Switch CMake build (app/cmake/alice_renut_gpu.cmake) reads both
-          # generated sources from app/out/renut_switch, and
-          # renut_switch_shader_cache.py always writes there. The packager
+          # The base's packager and renut_switch_shader_cache.py write to app/out/renut_switch
+          # (copied to out/renut_switch below, where Alice's CMake looks). The packager
           # defaults elsewhere, so point it at the same folder; otherwise the
           # NRO would be built without the game's GLSL shaders (a CMake warning,
           # not an error).
@@ -671,6 +670,13 @@ jobs:
           ls -la app/out/renut_switch
           test -s app/out/renut_switch/deko3d_glsl_switch.cpp
           test -s app/out/renut_switch/shader_cache_switch.cpp
+          # Alice's CMake (app/cmake/alice_renut_gpu.cmake) reads the two sources from out/renut_switch, beside
+          # the app folder, not from app/out. Both generated files name their data blobs by absolute path, so
+          # a copy is enough.
+          mkdir -p out/renut_switch
+          cp -a app/out/renut_switch/. out/renut_switch/
+          test -s out/renut_switch/deko3d_glsl_switch.cpp
+          test -s out/renut_switch/shader_cache_switch.cpp
           echo "shader_count=$glsl_opt_count" >> "$GITHUB_OUTPUT"
           echo "### Shader translation summary" >> "$GITHUB_STEP_SUMMARY"
           echo "- SPIR-V files: $spirv_count" >> "$GITHUB_STEP_SUMMARY"
