@@ -32,6 +32,9 @@ overlay tools
 overlay docs
 cp -f "$here/README.md" "$here/LICENSE" "$here/THIRD_PARTY_NOTICES.md" "$dest/"
 
+# The base's shader tools name Windows binaries (.exe); make them portable (every edit is checked).
+python3 -I "$here/ultimate/patch_base_tools.py" "$dest"
+
 # The in-tree SDK build (Alice's tools/build_sdk.sh looked for sa2-nx's fetch script, which the base does not have).
 install -m 0755 "$here/ultimate/build_sdk.sh" "$dest/tools/build_sdk.sh"
 
