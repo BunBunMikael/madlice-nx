@@ -126,6 +126,13 @@ struct RenutUboShared { uint4 v[RENUT_SHARED_VECTORS]; };
 // a draw predicated to one tile renders to; the pixel position is relative to it, as the GPU's is to the EDRAM a tile
 // renders in.
 #define g_PixelOrigin              RENUT_SHARED_FLOAT2(1344)
+// ultimate (stage 2a): the base's XenosRecomp emits these for features Alice's renderer does not drive yet. They are inert
+// here (no user clip plane, no depth remap, loop constants left at zero) and keep the shared block at 85 vectors / 1360
+// bytes, which render/draw.cpp and upload_ring.h assume. Stage 2b grows the block and fills them.
+#define g_UserClipPlane            float4(0.0, 0.0, 0.0, 0.0)
+#define g_DepthRemap               float2(0.0, 0.0)
+#define g_LoopConstantWord(i)      0u
+#define g_LoopConstant(n)          int4(0, 0, 0, 0)
 #define g_AlphaThreshold           RENUT_SHARED_FLOAT(552)
 #define g_AlphaTestFunc            RENUT_SHARED_UINT(556)
 #define g_VertexFetchDataAddress   RENUT_SHARED_UINT64(560)

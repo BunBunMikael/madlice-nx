@@ -566,7 +566,7 @@ jobs:
           # the file the CMake build itself uses (RENUT_SHADER_COMMON_DIR in
           # gpu.cmake). The old path under app/src/renut_engine/ does not exist,
           # and XenosRecomp segfaults (fseek on a NULL FILE*) when it is missing.
-          common=app/thirdparty/reblue-XenosRecomp/XenosRecomp/shader_common.h
+          common=app/src/renut_engine/gpu/shaders/xenos/shader_common.h
           if [[ ! -s "$ALICE/$common" ]]; then
             echo "::error::shader_common.h not found at $ALICE/$common"
             find "$ALICE" -name shader_common.h -not -path '*/.git/*' | head
