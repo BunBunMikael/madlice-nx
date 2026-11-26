@@ -97,7 +97,7 @@ REXCVAR_DEFINE_BOOL(sa2_renut_fetch_data_unread, true, "SA2/Renderer",
                     "and size 0 (they never read them) instead of a new allocation's, and no fetch binding")
     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
 REXCVAR_DEFINE_BOOL(sa2_renut_shared_partial_clear, true, "SA2/Renderer",
-                    "Renut's renderer: a draw's shared constants are zeroed from the booleans on (848 of 1,360 bytes); "
+                    "Renut's renderer: a draw's shared constants are zeroed from the booleans on (848 of 1,552 bytes); "
                     "the texture and sampler words before them are all written by FillTextures. Off: all zeroed")
     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
 REXCVAR_DEFINE_BOOL(sa2_renut_lean_diagnostics, true, "SA2/Renderer",
@@ -216,6 +216,14 @@ struct SharedConstants {
   // to one tile has the tile's corner (ViewportState::pixel_origin).
   float pixel_origin[2];
   float pad_1352[2];
+  // 1360 (ultimate, from the base's halo3-nx): the device's loop constants (i0-i15 the vertex shaders', i16-i31 the pixel
+  // shaders'), for loops a shader does not define itself (shader_common.h g_LoopConstant).
+  u32 loop_constants[32];
+  // 1488 (ultimate): user clip plane 0 (g_UserClipPlane), zero when the draw has none (a distance of 0 clips nothing).
+  float user_clip_planes[1][4];
+  // 1504 (ultimate): g_DepthRemap. Always 0 here: deko3d takes a backwards depth range itself.
+  float depth_remap[2];
+  float pad_1512[10];  // to 1552: the 16-byte tail
 };
 static_assert(offsetof(SharedConstants, sampler_indices) == 384);
 static_assert(offsetof(SharedConstants, booleans) == 512);
@@ -233,7 +241,10 @@ static_assert(offsetof(SharedConstants, point_state) == 1312);
 static_assert(offsetof(SharedConstants, viewport_size) == 1328);
 static_assert(offsetof(SharedConstants, resolution_scale) == 1336);
 static_assert(offsetof(SharedConstants, pixel_origin) == 1344);
-static_assert(sizeof(SharedConstants) == 1360);
+static_assert(offsetof(SharedConstants, loop_constants) == 1360);
+static_assert(offsetof(SharedConstants, user_clip_planes) == 1488);
+static_assert(offsetof(SharedConstants, depth_remap) == 1504);
+static_assert(sizeof(SharedConstants) == 1552);
 static_assert(sizeof(SharedConstants) == kSharedConstantsUboBytes);
 
 // The guest D3DDevice a draw reads its state from: the live device, or a
@@ -4254,7 +4265,7 @@ bool DrawStateLocked(const u8 *device_state, const DrawCall &call, const ReplayC
   // Everything that records copies or barriers comes before the framebuffer.
   SharedConstants sc;
   // sa2-nx (2026-10-20, sa2_renut_shared_partial_clear): FillTextures writes all 128 texture and 32 sampler words (its
-  // first loop, or the chain's copy of a previous draw's), so only what follows them is zeroed (848 of 1,360 bytes).
+  // first loop, or the chain's copy of a previous draw's), so only what follows them is zeroed (848 of 1,552 bytes).
   static_assert(offsetof(SharedConstants, booleans) == sizeof(sc.texture_indices) + sizeof(sc.sampler_indices));
   static const bool partial_clear = REXCVAR_GET(sa2_renut_shared_partial_clear);
   if (partial_clear)
@@ -4364,6 +4375,23 @@ bool DrawStateLocked(const u8 *device_state, const DrawCall &call, const ReplayC
     u32 word;
     std::memcpy(&word, bools + 4 * i, 4);
     sc.booleans[i] = __builtin_bswap32(word);
+  }
+  {
+    // ultimate: the loop constants, byte-swapped to the words the shaders unpack (g_LoopConstant): VertexShaderI then
+    // PixelShaderI are contiguous in the register image.
+    static_assert(offsetof(d3d::Constants, PixelShaderI) == offsetof(d3d::Constants, VertexShaderI) + 64);
+    const u8 *from = reinterpret_cast<const u8 *>(&dev.m_Constants.VertexShaderI[0]);
+    for (u32 i = 0; i < 32; ++i) {
+      u32 word;
+      std::memcpy(&word, from + 4 * i, 4);
+      sc.loop_constants[i] = __builtin_bswap32(word);
+    }
+    // ultimate: user clip plane 0 (PA_CL_CLIP_CNTL bits 0-5 enable planes, bit 16 is clip_disable); plane 0 only.
+    const u32 clip_control = dev.m_ControlPacket.ClipControl;
+    if ((clip_control & 1u) && !(clip_control & 0x10000u)) {
+      for (u32 i = 0; i < 4; ++i)
+        sc.user_clip_planes[0][i] = float(dev.m_ClipPlanes[0][i]);
+    }
   }
   const u32 color_control = dev.m_ControlPacket.ColorControl;
   sc.alpha_test_func = (color_control & 8) ? (color_control & 7) : 7;

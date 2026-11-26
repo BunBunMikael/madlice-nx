@@ -62,7 +62,7 @@
 #ifdef __spirv__
 
 // banjo-nx: 16-byte vectors of SharedConstants (render/draw.h, kSharedConstantsUboBytes / 16).
-#define RENUT_SHARED_VECTORS 85  // banjo-nx (2026-10-19): 1360 bytes, with g_PixelOrigin
+#define RENUT_SHARED_VECTORS 97  // 1552 bytes: banjo-nx's 1360 + ultimate's loop constants, clip plane, depth remap
 
 #ifndef BANJO_DEKO3D  // banjo-nx: the deko3d build has no push constants and no 64-bit addresses
 struct PushConstants
@@ -126,13 +126,11 @@ struct RenutUboShared { uint4 v[RENUT_SHARED_VECTORS]; };
 // a draw predicated to one tile renders to; the pixel position is relative to it, as the GPU's is to the EDRAM a tile
 // renders in.
 #define g_PixelOrigin              RENUT_SHARED_FLOAT2(1344)
-// ultimate (stage 2a): the base's XenosRecomp emits these for features Alice's renderer does not drive yet. They are inert
-// here (no user clip plane, no depth remap, loop constants left at zero) and keep the shared block at 85 vectors / 1360
-// bytes, which render/draw.cpp and upload_ring.h assume. Stage 2b grows the block and fills them.
-#define g_UserClipPlane            float4(0.0, 0.0, 0.0, 0.0)
-#define g_DepthRemap               float2(0.0, 0.0)
-#define g_LoopConstantWord(i)      0u
-#define g_LoopConstant(n)          int4(0, 0, 0, 0)
+// ultimate (stage 2b): what the base's XenosRecomp emits. 1360..1487 the device's 32 loop constants, 1488 user clip plane 0
+// (zero when the draw has none), 1504 a depth remap (always 0 on deko3d). Filled in render/draw.cpp.
+#define g_LoopConstantWord(i)      RENUT_SHARED_UINT(1360 + (i)*4)
+#define g_UserClipPlane            float4(RENUT_SHARED_FLOAT(1488), RENUT_SHARED_FLOAT(1492), RENUT_SHARED_FLOAT(1496), RENUT_SHARED_FLOAT(1500))
+#define g_DepthRemap               RENUT_SHARED_FLOAT2(1504)
 #define g_AlphaThreshold           RENUT_SHARED_FLOAT(552)
 #define g_AlphaTestFunc            RENUT_SHARED_UINT(556)
 #define g_VertexFetchDataAddress   RENUT_SHARED_UINT64(560)
@@ -198,8 +196,12 @@ struct RenutUboShared { uint4 v[RENUT_SHARED_VECTORS]; };
     uint4 g_BoundFetchArr[16] : packoffset(c66); \
     float2 g_ViewportSize : packoffset(c83.x); \
     float g_ResolutionScale : packoffset(c83.z); \
-    float2 g_PixelOrigin : packoffset(c84.x);
+    float2 g_PixelOrigin : packoffset(c84.x); \
+    uint4 g_LoopConstantsArr[8] : packoffset(c85); \
+    float4 g_UserClipPlane : packoffset(c93); \
+    float2 g_DepthRemap : packoffset(c94.x);
 
+#define g_LoopConstantWord(i) (g_LoopConstantsArr[(i) / 4][(i) % 4])
 #define g_Booleans(i) (g_BooleansArr[(i) / 4][(i) % 4])
 #define g_VertexFetchSlot(i) (g_VertexFetchSlotsArr[(i) / 4][(i) % 4])
 #define g_MemExportStream(i) (g_MemExportStreamsArr[i])
@@ -221,6 +223,12 @@ RWByteAddressBuffer g_MemExport : register(u0, space6);
 
 uint g_SpecConstants();
 
+#endif
+
+#ifdef RENUT_RECOMP
+// Loop constant N from the device, unpacked as a shader's own definition is: count, start, step, each a signed byte.
+#define g_LoopConstant(n) int4(int(g_LoopConstantWord(n) << 24) >> 24, int(g_LoopConstantWord(n) << 16) >> 24, \
+                               int(g_LoopConstantWord(n) << 8) >> 24, int(g_LoopConstantWord(n)) >> 24)
 #endif
 
 #if defined(REBLUE_RECOMP) || defined(RENUT_RECOMP)
