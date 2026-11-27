@@ -24,14 +24,16 @@ on:
           - '3'
           - '4'
       codegen_passes:
-        description: "Base codegen rewrites to apply (exact vector/scalar ones; the texture-glitch suspects stay off). none = Alice's original code"
+        description: "Base codegen rewrites: max = everything ported (incl. loop barriers/locals/fences, the texture-glitch suspects), all = vector+scalar+memory only, none = Alice's original code"
         required: true
         type: choice
-        default: 'all'
+        default: 'max'
         options:
+          - 'max'
           - 'all'
           - 'vector'
           - 'scalar'
+          - 'memory'
           - 'none'
       fpcr_one_mode:
         description: Experimental non-bit-exact FP mode; keep disabled until Alice passes its denormal census

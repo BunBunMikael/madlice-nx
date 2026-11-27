@@ -25,39 +25,72 @@ APP = os.path.join(ROOT, 'app')
 GEN = os.path.join(APP, 'generated')
 CODEGEN = os.path.join(GEN, 'default')
 
-# ultimate (stage 3): the base's exact, local rewrites, switchable by ALICE_CODEGEN_PASSES (none | vector | scalar | all;
-# default none, the workflow sets it). Groups are the base's tools in the base's order. Left OUT on purpose, until each is
-# bisected on the console: pch_no_volatile, loop_barriers, direct_calls, indirect_calls, dead_ctx_defs and the r1 / lr
-# passes (the suspects of the 2026-11-03/04 texture glitches), the localized copies and the guest fences.
-GROUPS = {
-    'vector': ['vec_byteswap', 'vperm_one_source', 'vec_unaligned_stores', 'vec_lane_index', 'vec_cvt_fixed',
-               'vec_prefetch_line', 'vec_lvlx_splat', 'vec_shift_whole', 'vupkd3d_neon', 'vmx_float_macros'],
-    'scalar': ['inline_memcalls', 'fp_sign_ops', 'float_loads', 'single_floats'],
-}
+# ultimate (stage 3): the base's local rewrites, switchable by ALICE_CODEGEN_PASSES: a comma list of groups, or
+#   none | all (vector, scalar, memory) | max (every group).
+# Groups and their order are the base's (tools/post_codegen.py there). 'barrier' (pch_no_volatile + loop_barriers, required
+# together), 'locals' (needs 'barrier') and 'fences' are the suspects of the 2026-11-03/04 texture glitches in
+# docs/alice-notes.md: if textures glitch, drop groups until it stops. Not ported, because they read Banjo's hook and
+# image data: direct_calls, indirect_calls, dead_ctx_defs, ro_constants*, leaf_dead_stores, reg_liveness, the localized
+# copies and the r1 / lr passes.
+# Entry: (group, tool, how): 'gen' = --gen <dir>, 'pch' = the pch path, 'dir' = the folder, positional.
+STEPS = [
+    ('barrier', 'pch_no_volatile', 'pch'), ('barrier', 'loop_barriers', 'dir'),
+    ('memory', 'pch_cold_traps', 'pch'), ('memory', 'guest_cas', 'gen'),
+    ('fences', 'guest_fences', 'gen'),
+    ('vector', 'vec_byteswap', 'gen'), ('vector', 'pch_neon_shuffles', 'pch'),
+    ('locals', 'loop_locals', 'gen'), ('locals', 'leaf_locals', 'gen'),
+    ('vector', 'vperm_one_source', 'gen'), ('scalar', 'fp_sign_ops', 'gen'), ('scalar', 'single_floats', 'gen'),
+    ('scalar', 'inline_memcalls', 'gen'), ('vector', 'vec_unaligned_stores', 'gen'), ('vector', 'vec_lane_index', 'gen'),
+    ('vector', 'vec_cvt_fixed', 'gen'), ('vector', 'vec_prefetch_line', 'gen'), ('vector', 'vec_lvlx_splat', 'gen'),
+    ('vector', 'vec_shift_whole', 'gen'), ('memory', 'flush_hoist', 'gen'), ('vector', 'vupkd3d_neon', 'gen'),
+    ('vector', 'vmx_float_macros', 'gen'), ('memory', 'stack_forward', 'gen'), ('scalar', 'float_loads', 'gen'),
+    ('memory', 'vec_dcbz_zva', 'gen'),
+]
+GROUPS = ['vector', 'scalar', 'memory', 'barrier', 'locals', 'fences']
+DEFAULT_ALL = ['vector', 'scalar', 'memory']
 
 
 def passes_wanted():
     raw = os.environ.get('ALICE_CODEGEN_PASSES', 'none').strip().lower()
-    names = []
+    names = set()
     for part in re.split(r'[,+ ]+', raw):
-        names += list(GROUPS) if part == 'all' else ([part] if part in GROUPS else [])
-    return [g for g in GROUPS if g in names]
+        if part == 'max':
+            names |= set(GROUPS)
+        elif part == 'all':
+            names |= set(DEFAULT_ALL)
+        elif part in GROUPS:
+            names.add(part)
+    if 'locals' in names and 'barrier' not in names:
+        print('post_codegen: ::warning::locals needs barrier (loop barriers); locals dropped')
+        names.discard('locals')
+    return names
+
+
+def pch_path():
+    for name in sorted(os.listdir(CODEGEN)):
+        m = re.fullmatch(r'(\w+)_recomp\.\d+\.cpp', name)
+        if m:
+            return os.path.join(CODEGEN, m.group(1) + '_pch.h')
+    return os.path.join(CODEGEN, 'alice_pch.h')
 
 
 def run_passes(groups):
     """Each pass on its own: a failure is a warning (and the pass is not counted), not the end of a two-hour build."""
     done = []
-    for group in groups:
-        for name in GROUPS[group]:
-            tool = os.path.join(ROOT, 'tools', name + '.py')
-            if not os.path.isfile(tool):
-                print(f'post_codegen: ::warning::{name}.py is missing; skipped')
-                continue
-            result = subprocess.run([sys.executable, tool, '--gen', CODEGEN], cwd=ROOT)
-            if result.returncode != 0:
-                print(f'post_codegen: ::warning::{name}.py failed ({result.returncode}); its rewrites may be partial')
-            else:
-                done.append(name)
+    pch = pch_path()
+    for group, name, how in STEPS:
+        if group not in groups:
+            continue
+        tool = os.path.join(ROOT, 'tools', name + '.py')
+        if not os.path.isfile(tool):
+            print(f'post_codegen: ::warning::{name}.py is missing; skipped')
+            continue
+        args = {'gen': ['--gen', CODEGEN], 'pch': [pch], 'dir': [CODEGEN]}[how]
+        result = subprocess.run([sys.executable, tool, *args], cwd=ROOT)
+        if result.returncode != 0:
+            print(f'post_codegen: ::warning::{name}.py failed ({result.returncode}); its rewrites may be partial')
+        else:
+            done.append(name)
     return done
 
 
