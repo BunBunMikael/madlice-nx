@@ -33,3 +33,22 @@ the game: delete them after downloading, and make the repository private when yo
 ## Taking newer base work
 
 Sync your fork of the base, put its commit in `BASE_REF`, and run the workflow.
+
+## Engine layout (from the base-first re-port, 2026-11-27)
+
+`app/src/renut_engine` is now the base's engine (commit in `BASE_REF`), not Alice's older sa2-nx copy, with only the
+game layer of Alice on it:
+
+- `gpu/d3d/hooks/{device,draw,resource}.cpp`: Alice's own hooks, at Alice's functions (Direct3D 2.0.20353).
+  `gpu/d3d/hooks/shader.cpp` is the base's file with Alice's hook registrations and declaration table.
+  `d3d/hooks/state.cpp`, `guest/widescreen.cpp`, `guest/photo_capture.cpp` are not built (gpu.cmake).
+- `gpu/d3d/d3d.h`, `d3d_native.h`: the base's, with Alice's offsets by name; `kStateTagChunks` is the conservative
+  range (every chunk after the register packets) until Alice's private state is census-checked.
+- `backend/queued.cpp`, `guest/command_buffers.{h,cpp}`: the base's, with Alice's delta-chunk bounds (11008-12096) and
+  BeginIndexedVertices' index copy.
+- `gpu/banjo_renut_select.cpp`: Alice's (`sa2_renderer`), `gpu/sa2_renut_pacing.cpp`, `guest/sa2_screen.cpp`: Alice's.
+- Alice's depth bias, fetch-only textures, texture exponent adjust and resolve exponent bias are the base's own
+  features now (dynamic depth bias, `sasrt_renut_texture_fetch_only`, `sasrt_renut_texture_exp_adjust`,
+  `blur_renut_resolve_exp_bias`): the renderer's and the translator's shader_common.h are one generation again.
+- `ultimate/check/`: a local `clang -fsyntax-only` of every source against stubs for what the build generates
+  (`make_stubs.py`, `chk.sh`, `chkall.sh`): API drift shows in a minute instead of after a two-hour CI run.
