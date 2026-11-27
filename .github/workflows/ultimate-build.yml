@@ -23,6 +23,16 @@ on:
           - '2'
           - '3'
           - '4'
+      codegen_passes:
+        description: "Base codegen rewrites to apply (exact vector/scalar ones; the texture-glitch suspects stay off). none = Alice's original code"
+        required: true
+        type: choice
+        default: 'all'
+        options:
+          - 'all'
+          - 'vector'
+          - 'scalar'
+          - 'none'
       fpcr_one_mode:
         description: Experimental non-bit-exact FP mode; keep disabled until Alice passes its denormal census
         required: true
@@ -57,6 +67,7 @@ jobs:
     env:
       GAME_DRIVE_FILE_ID: ${{ inputs.game_drive_file_id }}
       BUILD_JOBS: ${{ inputs.build_jobs }}
+      ALICE_CODEGEN_PASSES: ${{ inputs.codegen_passes }}
       ALICE_FPCR_ONE_MODE: ${{ inputs.fpcr_one_mode == 'true' && 'ON' || 'OFF' }}
       ALICE: /mnt/work/alice-nx
       # Alice's scripts and CMake look for "the sa2-nx tree" (SDK, third-party code, tools) beside the app:
