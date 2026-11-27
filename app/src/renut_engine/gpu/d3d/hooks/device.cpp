@@ -870,6 +870,13 @@ void D3DDevice_RunCommandBuffer_hook(u32 device_va, u32 command_buffer,
 constexpr u32 kSa2DeviceOffsetGammaRamp = 15280;  // alice-nx: Alice's, which its Swap sub_82B59050 reads (SA2 15408)
 
 // sa2-nx (2026-10-20): the SDK's core layout (system/xthread.cpp).
+// ultimate (the base's Port 161): see D3DDevice_Swap_hook's present closure.
+REXCVAR_DEFINE_BOOL(banjo_renut_bookkeeping_after_present, true, "Banjo/Enhancements",
+                    "The render thread's frame bookkeeping (texture and stream-cache frames, the resolution latch, the "
+                    "memory report, the idle pipelines and spare buffers) after the frame's present, while the GPU "
+                    "draws it. false: before the present, as before")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+
 REXCVAR_DEFINE_BOOL(sa2_renut_core_layout, true, "SA2/Renderer",
                     "Renut's renderer on the Switch: at the first Swap the guest main thread (SA2's game and drawing "
                     "thread) is pinned to core 0 and every other guest thread gets cores 1-2 (the render thread is on "
@@ -932,6 +939,12 @@ void D3DDevice_Swap_hook(u32 device_va, u32 front_buffer, u32 /*parameters*/) {
     // (sa2_renut_gamma_ramp).
   }
 
+  // ultimate (the base's Port 161, banjo_renut_bookkeeping_after_present): the frame's bookkeeping (texture and
+  // stream-cache frames, the resolution latch, the memory report, the idle pipelines and spare buffers) after the
+  // present: the frame goes to the GPU and the display first, and the bookkeeping runs while the GPU draws it. It still
+  // comes before the next frame's commands (one render thread). (Port 169, the scaler crop, reads Katamari's device
+  // offset and is not carried over.)
+  static const bool after = REXCVAR_GET(banjo_renut_bookkeeping_after_present);
   render_thread::QueueFrame([front_buffer, swap_ordinal] {
     PresentImage image;
     {
@@ -939,14 +952,35 @@ void D3DDevice_Swap_hook(u32 device_va, u32 front_buffer, u32 /*parameters*/) {
       image = FrontBufferImageLocked(front_buffer);
       if (image.texture)
         State().last_front_buffer = front_buffer;
-      AdvanceTextureFrameLocked();
-      AdvanceStreamCacheFrameLocked();
-      LatchResolutionScaleLocked();
+      if (!after) {
+        AdvanceTextureFrameLocked();
+        AdvanceStreamCacheFrameLocked();
+        LatchResolutionScaleLocked();
+      }
     }
-    MaybeReportMemory();
+    if (!after) {
+      MaybeReportMemory();
+      ReleaseIdlePrebuiltPipelines();
+      ReleaseSpareBuffersWhenHeapShort();
+    }
     // The front buffer is the texture the game resolved the frame into.
     Video::NotePresentingSwap(swap_ordinal);  // banjo-nx (2026-10-20): the probe's "input -> GPU done"
     Video::Present(image.texture ? &image : nullptr);
+    if (after) {
+      rex::latency::NotePresented(swap_ordinal);
+      banjo::display_sync::NotePresented(swap_ordinal);
+      {
+        std::lock_guard lock(State().mutex);
+        ::renut::gpu::SyncPipelineListLocked();
+        AdvanceTextureFrameLocked();
+        AdvanceStreamCacheFrameLocked();
+        LatchResolutionScaleLocked();
+      }
+      MaybeReportMemory();
+      ReleaseIdlePrebuiltPipelines();
+      ReleaseSpareBuffersWhenHeapShort();
+      return;
+    }
     {
       std::lock_guard lock(State().mutex);
       ::renut::gpu::SyncPipelineListLocked();  // banjo-nx (2026-10-20): the list's new records to the card
