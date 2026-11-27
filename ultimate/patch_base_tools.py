@@ -11,6 +11,12 @@ import sys
 EXE = "('.exe' if os.name == 'nt' else '')"
 
 EDITS = {
+    # The base reads its hooks from app/src, app/config and a few app/*.toml; Alice's are in app/src and
+    # app/overrides.toml (mid-function hooks such as setjmp). Every app/*.toml counts: a name too many is safe.
+    'tools/direct_calls.py': [
+        ("os.path.join(APP, 'CMakeLists.txt')]",
+         "os.path.join(APP, 'CMakeLists.txt'),\n           *__import__('glob').glob(os.path.join(APP, '*.toml'))]"),
+    ],
     'tools/deko3d_shaders.py': [
         ("'spirv-cross-build', 'spirv-cross.exe')", f"'spirv-cross-build', 'spirv-cross' + {EXE})"),
         ("'uam-build', 'uam.exe')", f"'uam-build', 'uam' + {EXE})"),

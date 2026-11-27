@@ -28,26 +28,43 @@ CODEGEN = os.path.join(GEN, 'default')
 # ultimate (stage 3): the base's local rewrites, switchable by ALICE_CODEGEN_PASSES: a comma list of groups, or
 #   none | all (vector, scalar, memory) | max (every group).
 # Groups and their order are the base's (tools/post_codegen.py there). 'barrier' (pch_no_volatile + loop_barriers, required
-# together), 'locals' (needs 'barrier') and 'fences' are the suspects of the 2026-11-03/04 texture glitches in
-# docs/alice-notes.md: if textures glitch, drop groups until it stops. Not ported, because they read Banjo's hook and
-# image data: direct_calls, indirect_calls, dead_ctx_defs, ro_constants*, leaf_dead_stores, reg_liveness, the localized
-# copies and the r1 / lr passes.
-# Entry: (group, tool, how): 'gen' = --gen <dir>, 'pch' = the pch path, 'dir' = the folder, positional.
+# together), 'locals' (needs 'barrier'), 'fences', 'calls' (direct_calls) and 'image' are the suspects of the 2026-11-03/04
+# texture glitches in docs/alice-notes.md: if textures glitch, drop groups until it stops.
+#   calls  direct_calls --redo: calls between unhooked functions become direct (inlinable). It reads the hooks from
+#          app/src, the SDK and app/*.toml (ultimate/patch_base_tools.py adds overrides.toml).
+#   image  the passes that read the decrypted image (out/default_image.bin, written by codegen.sh): ro_constants,
+#          ro_constants_cfg, leaf_dead_stores, dead_ctx_defs, reg_liveness. Skipped when the image is missing.
+# Not ported, because they need data only a profiled game has: indirect_calls (indirect_promotions.txt), the localized
+# hot copies (localized*.txt) and the r1 / lr passes (their *_choice.json lists). app/src/cpu/hot/hand.txt is empty
+# here (Alice has no hand-written natives of that kind), which those tools expect to exist.
+# Entry: (group, tool, args): {gen} the generated folder, {pch} the pch, {dir} the folder, {image} the image dump.
 STEPS = [
-    ('barrier', 'pch_no_volatile', 'pch'), ('barrier', 'loop_barriers', 'dir'),
-    ('memory', 'pch_cold_traps', 'pch'), ('memory', 'guest_cas', 'gen'),
-    ('fences', 'guest_fences', 'gen'),
-    ('vector', 'vec_byteswap', 'gen'), ('vector', 'pch_neon_shuffles', 'pch'),
-    ('locals', 'loop_locals', 'gen'), ('locals', 'leaf_locals', 'gen'),
-    ('vector', 'vperm_one_source', 'gen'), ('scalar', 'fp_sign_ops', 'gen'), ('scalar', 'single_floats', 'gen'),
-    ('scalar', 'inline_memcalls', 'gen'), ('vector', 'vec_unaligned_stores', 'gen'), ('vector', 'vec_lane_index', 'gen'),
-    ('vector', 'vec_cvt_fixed', 'gen'), ('vector', 'vec_prefetch_line', 'gen'), ('vector', 'vec_lvlx_splat', 'gen'),
-    ('vector', 'vec_shift_whole', 'gen'), ('memory', 'flush_hoist', 'gen'), ('vector', 'vupkd3d_neon', 'gen'),
-    ('vector', 'vmx_float_macros', 'gen'), ('memory', 'stack_forward', 'gen'), ('scalar', 'float_loads', 'gen'),
-    ('memory', 'vec_dcbz_zva', 'gen'),
+    ('barrier', 'pch_no_volatile', ['{pch}']), ('barrier', 'loop_barriers', ['{dir}']),
+    ('memory', 'pch_cold_traps', ['{pch}']), ('calls', 'direct_calls', ['--redo', '--gen', '{gen}']),
+    ('memory', 'guest_cas', ['--gen', '{gen}']),
+    ('fences', 'guest_fences', ['--gen', '{gen}']),
+    ('vector', 'vec_byteswap', ['--gen', '{gen}']), ('vector', 'pch_neon_shuffles', ['{pch}']),
+    ('image', 'ro_constants', ['--gen', '{gen}', '--image', '{image}']),
+    ('locals', 'loop_locals', ['--gen', '{gen}']), ('locals', 'leaf_locals', ['--gen', '{gen}']),
+    ('vector', 'vperm_one_source', ['--gen', '{gen}']), ('scalar', 'fp_sign_ops', ['--gen', '{gen}']),
+    ('image', 'leaf_dead_stores', ['--gen', '{gen}', '--image', '{image}']),
+    ('scalar', 'single_floats', ['--gen', '{gen}']),
+    ('scalar', 'inline_memcalls', ['--gen', '{gen}']), ('vector', 'vec_unaligned_stores', ['--gen', '{gen}']),
+    ('vector', 'vec_lane_index', ['--gen', '{gen}']),
+    ('vector', 'vec_cvt_fixed', ['--gen', '{gen}']), ('vector', 'vec_prefetch_line', ['--gen', '{gen}']),
+    ('vector', 'vec_lvlx_splat', ['--gen', '{gen}']),
+    ('vector', 'vec_shift_whole', ['--gen', '{gen}']),
+    ('image', 'ro_constants_cfg', ['--gen', '{gen}', '--image', '{image}']),
+    ('image', 'dead_ctx_defs', ['--gen', '{gen}', '--image', '{image}', '--abi-indirect']),
+    ('memory', 'flush_hoist', ['--gen', '{gen}']), ('vector', 'vupkd3d_neon', ['--gen', '{gen}']),
+    ('vector', 'vmx_float_macros', ['--gen', '{gen}']), ('memory', 'stack_forward', ['--gen', '{gen}']),
+    ('scalar', 'float_loads', ['--gen', '{gen}']),
+    ('image', 'reg_liveness', ['--gen', '{gen}', '--image', '{image}']),
+    ('memory', 'vec_dcbz_zva', ['--gen', '{gen}']),
 ]
-GROUPS = ['vector', 'scalar', 'memory', 'barrier', 'locals', 'fences']
+GROUPS = ['vector', 'scalar', 'memory', 'barrier', 'locals', 'fences', 'calls', 'image']
 DEFAULT_ALL = ['vector', 'scalar', 'memory']
+IMAGE = os.path.join(ROOT, 'out', 'default_image.bin')
 
 
 def passes_wanted():
@@ -85,7 +102,11 @@ def run_passes(groups):
         if not os.path.isfile(tool):
             print(f'post_codegen: ::warning::{name}.py is missing; skipped')
             continue
-        args = {'gen': ['--gen', CODEGEN], 'pch': [pch], 'dir': [CODEGEN]}[how]
+        if group == 'image' and not os.path.isfile(IMAGE):
+            print(f'post_codegen: ::warning::{IMAGE} is missing; {name} skipped')
+            continue
+        fill = {'{gen}': CODEGEN, '{pch}': pch, '{dir}': CODEGEN, '{image}': IMAGE}
+        args = [fill.get(a, a) for a in how]
         result = subprocess.run([sys.executable, tool, *args], cwd=ROOT)
         if result.returncode != 0:
             print(f'post_codegen: ::warning::{name}.py failed ({result.returncode}); its rewrites may be partial')

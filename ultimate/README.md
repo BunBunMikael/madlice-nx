@@ -52,3 +52,9 @@ game layer of Alice on it:
   `blur_renut_resolve_exp_bias`): the renderer's and the translator's shader_common.h are one generation again.
 - `ultimate/check/`: a local `clang -fsyntax-only` of every source against stubs for what the build generates
   (`make_stubs.py`, `chk.sh`, `chkall.sh`): API drift shows in a minute instead of after a two-hour CI run.
+
+## Codegen groups (`codegen_passes`)
+`vector`, `scalar`, `memory` are the safe set (`all`). `max` adds `barrier`, `locals`, `fences`, `calls` (direct_calls) and
+`image` (ro_constants, ro_constants_cfg, leaf_dead_stores, dead_ctx_defs, reg_liveness; they read `out/default_image.bin`).
+If textures glitch, go `max` -> `all`, then add groups back one at a time (barrier first, locals needs it).
+Not ported (they need profiled data): indirect_calls, the localized hot copies, the r1 / lr passes.
