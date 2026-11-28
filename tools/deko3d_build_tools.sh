@@ -9,10 +9,13 @@ set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 sa2="${SA2_NX:-$root/../sa2-nx}"
 out="$root/out/deko3d_tools"
-spirv_cross_tag="vulkan-sdk-1.4.363.0"
+# The revision the base's own MoltenVK uses (sdk/thirdparty/moltenvk/ExternalRevisions): the one its shaders were made with.
+spirv_cross_rev="$(tr -d '[:space:]' < "$root/sdk/thirdparty/moltenvk/ExternalRevisions/SPIRV-Cross_repo_revision")"
 mkdir -p "$out"
 if [[ ! -d "$out/SPIRV-Cross/.git" ]]; then
-  git clone -q --depth 1 --branch "$spirv_cross_tag" https://github.com/KhronosGroup/SPIRV-Cross.git "$out/SPIRV-Cross"
+  git init -q "$out/SPIRV-Cross"
+  git -C "$out/SPIRV-Cross" fetch -q --depth 1 https://github.com/KhronosGroup/SPIRV-Cross.git "$spirv_cross_rev"
+  git -C "$out/SPIRV-Cross" checkout -q FETCH_HEAD
 fi
 cmake -S "$out/SPIRV-Cross" -B "$out/spirv-cross-build" -G Ninja -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DSPIRV_CROSS_ENABLE_TESTS=OFF -DSPIRV_CROSS_SHARED=OFF \

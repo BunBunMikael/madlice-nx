@@ -35,7 +35,7 @@ fi
 grep -q "^ALICE_RENUT_RENDERER:BOOL=$renut\$" "$build/CMakeCache.txt" ||
   { echo "out/nx is not configured with ALICE_RENUT_RENDERER=$renut" >&2; exit 1; }
 set +e
-cmake --build "$build" --target alice -j "$jobs" > "$root/out/nx_build.log" 2>&1
+cmake --build "$build" --target alice -j "$jobs" -- -k 0 > "$root/out/nx_build.log" 2>&1
 code=$?
 set -e
 grep -E 'error:|FAILED|undefined reference' "$root/out/nx_build.log" | head -n 40 || true

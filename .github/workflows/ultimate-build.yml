@@ -497,8 +497,14 @@ jobs:
             delay=10
             for attempt in 1 2 3 4 5; do
               rm -rf "$spirv_src"
-              if git clone -q --depth 1 --branch vulkan-sdk-1.4.363.0 \
-                https://github.com/KhronosGroup/SPIRV-Cross.git "$spirv_src"; then
+              # The revision the base's own MoltenVK uses (sdk/thirdparty/moltenvk/ExternalRevisions), the SPIRV-Cross the
+              # base's shaders were made with: the newer vulkan-sdk-1.4.363.0 turned rectangle_list_gs into a program uam
+              # could not compile ("Error compiling program: -4", run 46069108978).
+              spirv_rev=$(tr -d '[:space:]' < sdk/thirdparty/moltenvk/ExternalRevisions/SPIRV-Cross_repo_revision)
+              [[ "$spirv_rev" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::SPIRV-Cross revision file is malformed"; exit 1; }
+              if git init -q "$spirv_src" \
+                && git -C "$spirv_src" fetch -q --depth 1 https://github.com/KhronosGroup/SPIRV-Cross.git "$spirv_rev" \
+                && git -C "$spirv_src" checkout -q FETCH_HEAD; then
                 cloned=true
                 break
               fi
@@ -755,6 +761,13 @@ jobs:
                "    for k in ('spirv-cross', 'uam', 'profile', 'stem', 'src', 'out'):\n"),
               ("subprocess.run([a.dxc, '-T', a.profile,",
                "subprocess.run([*a.dxc, '-T', a.profile,"),
+              # A uam failure keeps the GLSL it was given (the diagnostics artifact), so it can be read without a rerun.
+              ("            sys.exit(f'deko3d_host_shader: uam failed for {a.src}:\\n{r.stdout}{r.stderr}')\n",
+               "            _d = os.environ.get('DEKO3D_GLSL_DUMP')\n"
+               "            if _d:\n"
+               "                os.makedirs(_d, exist_ok=True)\n"
+               "                __import__('shutil').copy(glsl_path, os.path.join(_d, a.stem + '.glsl'))\n"
+               "            sys.exit(f'deko3d_host_shader: uam failed for {a.src}:\\n{r.stdout}{r.stderr}')\n"),
           ]
           for old, new in edits:
               if s.count(old) != 1:
@@ -770,6 +783,7 @@ jobs:
         id: build-nro
         env:
           BASH_ENV: /mnt/work/xtrace.sh
+          DEKO3D_GLSL_DUMP: /mnt/work/diagnostics/glsl
         run: |
           export DEVKITPRO
           cd "$ALICE"
