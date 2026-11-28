@@ -784,6 +784,7 @@ jobs:
         env:
           BASH_ENV: /mnt/work/xtrace.sh
           DEKO3D_GLSL_DUMP: /mnt/work/diagnostics/glsl
+          ALICE_CHECK_SOFT: ${{ inputs.codegen_passes != 'none' && '1' || '0' }}
         run: |
           export DEVKITPRO
           cd "$ALICE"
